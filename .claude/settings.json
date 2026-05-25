@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__enfusion-mcp__game_read",
+      "mcp__enfusion-mcp__wiki_search",
+      "mcp__enfusion-mcp__wb_prefabs",
+      "mcp__enfusion-mcp__wb_resources",
+      "mcp__enfusion-mcp__asset_search",
+      "mcp__enfusion-mcp__wb_open_resource",
+      "Bash(xargs grep -l \"vignette\\\\|thirds\\\\|logo\\\\|Armavision\")",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|thirds\\\\|Armavision\\\\|SCR_UIManual\")",
+      "mcp__enfusion-mcp__project_browse",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|thirds\\\\|m_bShowLogo\\\\|m_bShowGrid\")",
+      "Bash(find \"C:\\\\SteamLibrary\\\\steamapps\\\\common\\\\Arma Reforger\" -name \"*.c\" 2>/dev/null | head -20)",
+      "Read(//c/SteamLibrary/steamapps/common/Arma Reforger/**)",
+      "Bash(find \"C:\\\\SteamLibrary\\\\steamapps\\\\common\" -maxdepth 1 -type d 2>/dev/null | grep -i \"reforger\\\\|arma\")",
+      "Read(//c/SteamLibrary/steamapps/common/**)",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|m_bShowLogo\\\\|m_eGrid\\\\|m_eVignette\")",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|m_bShowLogo\\\\|m_eGrid\")",
+      "Bash(find \"C:\\\\Users\\\\nomisum\\\\AppData\" -name \"*armavision*\" -o -name \"*ArmaVision*\" -o -name \"*ManualCamera*\" 2>/dev/null | head -20)",
+      "Read(//c/Users/nomisum/AppData/**)",
+      "Read(//c/Users/nomisum/Documents/my games/**)",
+      "Bash(xargs grep -l \"vignette\\\\|thirds\\\\|logo\")",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|logo\\\\|armavision\\\\|Armavision\")",
+      "Bash(xargs grep -l \"vignette\\\\|Thirds\\\\|logo\\\\|Armavision\\\\|armavision\\\\|ManualCamera\")",
+      "Bash(xargs grep -l \"ManualCamera\\\\|SCR_.*Camera\")",
+      "mcp__enfusion-mcp__wb_script_editor",
+      "mcp__enfusion-mcp__wb_state",
+      "mcp__enfusion-mcp__wb_connect",
+      "Bash(del \"C:\\\\Users\\\\nomisum\\\\Documents\\\\my games\\\\ArmaReforgerWorkbench\\\\addons\\\\GRAD Cam\\\\Configs\\\\Editor\\\\AttributeLists\\\\Photo.conf\")",
+      "Bash(del \"C:\\\\Users\\\\nomisum\\\\Documents\\\\my games\\\\ArmaReforgerWorkbench\\\\addons\\\\GRAD Cam\\\\Configs\\\\Editor\\\\AttributeLists\\\\Photo.conf.meta\")"
+    ]
+  }
+}
