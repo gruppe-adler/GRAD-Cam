@@ -1,0 +1,11 @@
+SCR_ManualCamera : "{D6DE32D1C0FCC1C7}Prefabs/Editor/Camera/ManualCameraBase.et" {
+ ID "51625C12EB8222B1"
+ m_aComponents {
+  SCR_MovementInertiaManualCameraComponent "{52CC693B212FF002}" {
+   m_fInertiaStrength 1
+  }
+  SCR_RotationInertiaManualCameraComponent "{52CC693B212FF000}" {
+   m_fInertiaStrength 1
+  }
+ }
+}
