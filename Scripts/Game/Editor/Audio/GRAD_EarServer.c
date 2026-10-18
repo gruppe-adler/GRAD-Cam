@@ -2,7 +2,25 @@
 enum GRAD_EEarMode
 {
 	CAMERA, //!< Follow the editor camera
-	DROPPED //!< Fixed point in the world, or attached to an entity
+	DROPPED //!< Fixed point in the world, or attached to an entity (the owner streams the moving position)
+}
+
+//------------------------------------------------------------------------------------------------
+//! Server-side diagnostics: at most one line per key every few seconds
+class GRAD_EarDebug
+{
+	protected static ref map<string, float> s_mLast = new map<string, float>();
+
+	static bool Ready(string key, float interval_ms = 3000)
+	{
+		float now_ms = GetGame().GetWorld().GetWorldTime();
+		float last;
+		if (s_mLast.Find(key, last) && now_ms - last < interval_ms)
+			return false;
+
+		s_mLast.Set(key, now_ms);
+		return true;
+	}
 }
 
 //------------------------------------------------------------------------------------------------
@@ -12,8 +30,7 @@ modded class SCR_PlayerController : PlayerController
 {
 	protected GRAD_EEarMode m_eGradEarMode;
 	protected vector m_vGradEarPosition;
-	protected RplId m_GradEarTargetId = RplId.Invalid();
-	protected vector m_vGradEarOffset; //!< Position in the target's local space
+	protected int m_iGradRejected;
 
 	//------------------------------------------------------------------------------------------------
 	GRAD_EEarMode GRAD_GetEarMode()
@@ -22,33 +39,18 @@ modded class SCR_PlayerController : PlayerController
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Owner side: change the ear placement. For DROPPED, target may be null (free point).
-	void GRAD_SetEar(GRAD_EEarMode mode, vector worldPosition, IEntity target = null)
+	//! Owner side: change the ear placement. Only the position matters to the server and it reaches the
+	//! server through GRAD_StreamPosition, so no separate message is sent here.
+	void GRAD_SetEar(GRAD_EEarMode mode, vector worldPosition)
 	{
-		RplId targetId = RplId.Invalid();
-		vector offset;
-
-		if (mode == GRAD_EEarMode.DROPPED && target)
-		{
-			RplComponent rpl = RplComponent.Cast(target.FindComponent(RplComponent));
-			if (rpl)
-			{
-				targetId = rpl.Id();
-				offset = target.CoordToLocal(worldPosition);
-			}
-		}
-
-		ApplyEar(mode, worldPosition, targetId, offset);
-
-		if (Replication.IsServer())
-			return;
-
-		Rpc(GRAD_RpcEar, mode, worldPosition, targetId, offset);
+		m_eGradEarMode = mode;
+		m_vGradEarPosition = worldPosition;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Owner side: camera mode movement. Unreliable, losing a packet is harmless.
-	void GRAD_StreamCameraPosition(vector worldPosition)
+	//! Owner side: the ear position, sent whenever it moves and as a slow heartbeat. Unreliable,
+	//! losing a packet is harmless because the next one follows. Used for every ear mode.
+	void GRAD_StreamPosition(vector worldPosition)
 	{
 		m_vGradEarPosition = worldPosition;
 
@@ -57,67 +59,84 @@ modded class SCR_PlayerController : PlayerController
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void ApplyEar(GRAD_EEarMode mode, vector worldPosition, RplId targetId, vector offset)
-	{
-		m_eGradEarMode = mode;
-		m_vGradEarPosition = worldPosition;
-		m_GradEarTargetId = targetId;
-		m_vGradEarOffset = offset;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void GRAD_RpcEar(GRAD_EEarMode mode, vector worldPosition, RplId targetId, vector offset)
-	{
-		if (!GRAD_IsEditorOpen())
-			return;
-
-		ApplyEar(mode, worldPosition, targetId, offset);
-	}
-
-	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Unreliable, RplRcver.Server)]
 	protected void GRAD_RpcEarMove(vector worldPosition)
 	{
-		if (m_eGradEarMode != GRAD_EEarMode.CAMERA || !GRAD_IsEditorOpen())
+		if (!GRAD_IsAllowed())
 			return;
 
 		m_vGradEarPosition = worldPosition;
+
+		//! Vanilla treats the editor manager entity's position as the editor user's position (GetEditorWorldLocation
+		//! and the engine's editor lookups read it), so keep that entity on the ear even if the client's own
+		//! replicated movement of it does not arrive
+		SCR_EditorManagerEntity manager = GRAD_GetManager();
+		if (manager)
+		{
+			vector mat[4];
+			manager.GetWorldTransform(mat);
+			mat[3] = worldPosition;
+			manager.SetWorldTransform(mat);
+		}
+
+		if (GRAD_EarDebug.Ready("rx" + GetPlayerId().ToString()))
+		{
+			vector managerPos;
+			if (manager)
+			{
+				vector check[4];
+				manager.GetWorldTransform(check);
+				managerPos = check[3];
+			}
+
+			Print(string.Format("[GRAD][Ear] received position %1 from player %2, manager entity now at %3", worldPosition, GetPlayerId(), managerPos), LogLevel.NORMAL);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! This player's editor manager entity, null when none exists
+	protected SCR_EditorManagerEntity GRAD_GetManager()
+	{
+		SCR_EditorManagerCore core = SCR_EditorManagerCore.Cast(SCR_EditorManagerCore.GetInstance(SCR_EditorManagerCore));
+		if (!core)
+			return null;
+
+		return core.GetEditorManager(GetPlayerId());
 	}
 
 	//------------------------------------------------------------------------------------------------
 	//! Server side: only Game Masters / admins (unlimited editor) with the editor opened can place ears.
 	//! Limited editors, e.g. players with only a restricted photo mode, are refused.
-	protected bool GRAD_IsEditorOpen()
+	protected bool GRAD_IsAllowed()
 	{
-		SCR_EditorManagerCore core = SCR_EditorManagerCore.Cast(SCR_EditorManagerCore.GetInstance(SCR_EditorManagerCore));
-		if (!core)
-			return false;
+		SCR_EditorManagerEntity manager = GRAD_GetManager();
 
-		SCR_EditorManagerEntity manager = core.GetEditorManager(GetPlayerId());
-		return manager && manager.IsOpened() && !manager.IsLimited();
+		bool allowed = manager && manager.IsOpened() && !manager.IsLimited();
+
+		//! Diagnostics: report the first few refusals so a wrongly rejected mode (e.g. photo) shows up in the server log
+		if (!allowed && m_iGradRejected < 10)
+		{
+			m_iGradRejected++;
+
+			bool opened, limited;
+			if (manager)
+			{
+				opened = manager.IsOpened();
+				limited = manager.IsLimited();
+			}
+
+			Print(string.Format("[GRAD][Ear] refused player %1: manager=%2 opened=%3 limited=%4", GetPlayerId(), manager != null, opened, limited), LogLevel.WARNING);
+		}
+
+		return allowed;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	//! Server side: current ear position. False when vanilla behaviour should apply.
 	bool GRAD_GetEarPosition(out vector position)
 	{
-		if (!GRAD_IsEditorOpen())
+		if (!GRAD_IsAllowed())
 			return false;
-
-		if (m_eGradEarMode == GRAD_EEarMode.DROPPED && m_GradEarTargetId != RplId.Invalid())
-		{
-			RplComponent rpl = RplComponent.Cast(Replication.FindItem(m_GradEarTargetId));
-			IEntity target;
-			if (rpl)
-				target = rpl.GetEntity();
-
-			//! Attached entity is gone: stay where it was last seen
-			if (target)
-				m_vGradEarPosition = target.CoordToParent(m_vGradEarOffset);
-			else
-				m_GradEarTargetId = RplId.Invalid();
-		}
 
 		position = m_vGradEarPosition;
 		return true;
@@ -128,14 +147,32 @@ modded class SCR_PlayerController : PlayerController
 //! The engine asks the script where an editor user hears from
 modded class SCR_VoNComponent : VoNComponent
 {
+	//! Client side: a voice was delivered to this machine
+	override protected event void OnReceive(int playerId, bool isSenderEditor, BaseTransceiver receiver, int frequency, float quality)
+	{
+		super.OnReceive(playerId, isSenderEditor, receiver, frequency, quality);
+
+		if (GetGame().GetPlayerController())
+			GRAD_EarClient.LogVoice(playerId, isSenderEditor);
+	}
+
 	override protected event vector GetEditorWorldLocation(int playerId)
 	{
 		SCR_PlayerController controller = SCR_PlayerController.Cast(GetGame().GetPlayerManager().GetPlayerController(playerId));
 
 		vector position;
 		if (controller && controller.GRAD_GetEarPosition(position))
-			return position;
+		{
+			if (GRAD_EarDebug.Ready("poll" + playerId.ToString()))
+				Print(string.Format("[GRAD][Ear] engine asked for editor location of player %1, answered with %2", playerId, position), LogLevel.NORMAL);
 
-		return super.GetEditorWorldLocation(playerId);
+			return position;
+		}
+
+		vector fallback = super.GetEditorWorldLocation(playerId);
+		if (GRAD_EarDebug.Ready("fallback" + playerId.ToString()))
+			Print(string.Format("[GRAD][Ear] engine asked for editor location of player %1, using vanilla %2 (controller=%3)", playerId, fallback, controller != null), LogLevel.NORMAL);
+
+		return fallback;
 	}
 }

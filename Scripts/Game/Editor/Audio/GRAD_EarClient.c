@@ -135,8 +135,61 @@ class GRAD_EarClient
 		bool dropped = m_bHasDrop && controller.GRAD_GetEarMode() == GRAD_EEarMode.DROPPED && IsInterfaceVisible();
 		m_Marker.Update(GetDropPosition(), dropped);
 
+		//! Every mode streams the ear position: the camera, or the dropped point (which follows its target)
 		if (controller.GRAD_GetEarMode() == GRAD_EEarMode.CAMERA)
 			StreamCamera(controller);
+		else if (m_bHasDrop)
+			StreamPosition(controller, GetDropPosition());
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Diagnostics for delivery vs playback: called when this client is sent a voice. Compares how far the
+	//! speaker is from the camera, from the ear and from the actual audio listener.
+	static void LogVoice(int playerId, bool isSenderEditor)
+	{
+		if (!GRAD_EarDebug.Ready("voice" + playerId.ToString(), 1000))
+			return;
+
+		IEntity speaker = GetGame().GetPlayerManager().GetPlayerControlledEntity(playerId);
+		if (!speaker)
+		{
+			Print(string.Format("[GRAD][Ear][voice] from player %1 (editor=%2), no controlled entity", playerId, isSenderEditor), LogLevel.NORMAL);
+			return;
+		}
+
+		vector speakerPos = speaker.GetOrigin();
+
+		vector cameraPos;
+		SCR_ManualCamera camera = SCR_CameraEditorComponent.GetCameraInstance();
+		if (camera)
+		{
+			vector mat[4];
+			camera.GetWorldTransform(mat);
+			cameraPos = mat[3];
+		}
+
+		vector earPos = cameraPos;
+		bool dropped = GRAD_EarClient.GetInstance().GetDroppedEarPosition(earPos);
+
+		Print(string.Format("[GRAD][Ear][voice] from player %1 (editor=%2): %3 m from camera, %4 m from ear, %5 m from audio listener, ear dropped=%6",
+			playerId, isSenderEditor,
+			vector.Distance(speakerPos, cameraPos), vector.Distance(speakerPos, earPos), AudioSystem.GetDistance(speakerPos), dropped), LogLevel.NORMAL);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! True with the ear position while an ear is dropped, i.e. when the editor manager entity should
+	//! report that point instead of the camera
+	bool GetDroppedEarPosition(out vector position)
+	{
+		if (!m_bActive || !m_bHasDrop)
+			return false;
+
+		SCR_PlayerController controller = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+		if (!controller || controller.GRAD_GetEarMode() != GRAD_EEarMode.DROPPED)
+			return false;
+
+		position = GetDropPosition();
+		return true;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -171,7 +224,7 @@ class GRAD_EarClient
 			return;
 
 		if (controller.GRAD_GetEarMode() == GRAD_EEarMode.DROPPED && m_bHasDrop)
-			controller.GRAD_SetEar(GRAD_EEarMode.DROPPED, GetDropPosition(), m_DropTarget);
+			controller.GRAD_SetEar(GRAD_EEarMode.DROPPED, GetDropPosition());
 		else
 			controller.GRAD_SetEar(GRAD_EEarMode.CAMERA, vector.Zero);
 	}
@@ -199,6 +252,7 @@ class GRAD_EarClient
 		if (controller.GRAD_GetEarMode() == GRAD_EEarMode.DROPPED)
 		{
 			controller.GRAD_SetEar(GRAD_EEarMode.CAMERA, vector.Zero);
+			m_fLastStream_ms = 0;
 			SCR_HintManagerComponent.ShowCustomHint("You now hear players around the camera. Press R to drop the ear at the crosshair.", "Ear: camera", HINT_DURATION_S);
 		}
 		else
@@ -224,6 +278,14 @@ class GRAD_EarClient
 		trace.Exclude = camera;
 
 		float fraction = GetGame().GetWorld().TraceMove(trace, null);
+
+		//! Aimed at the sky: nothing to drop the ear on
+		if (fraction >= 1)
+		{
+			SCR_HintManagerComponent.ShowCustomHint("Aim at the ground or an object to drop the ear.", "Ear: nothing to drop on", HINT_DURATION_S);
+			return;
+		}
+
 		vector hit = trace.Start + (trace.End - trace.Start) * fraction;
 
 		//! Attach to the character/vehicle that was hit, so the ear travels with it
@@ -235,13 +297,14 @@ class GRAD_EarClient
 				target = root;
 		}
 
+		m_fLastStream_ms = 0;
 		m_bHasDrop = true;
 		m_DropTarget = target;
 		m_vDropPosition = hit;
 		if (target)
 			m_vDropOffset = target.CoordToLocal(hit);
 
-		controller.GRAD_SetEar(GRAD_EEarMode.DROPPED, hit, target);
+		controller.GRAD_SetEar(GRAD_EEarMode.DROPPED, hit);
 
 		if (target)
 			SCR_HintManagerComponent.ShowCustomHint("The ear is attached and follows it. Press R to return it to the camera.", "Ear: attached", HINT_DURATION_S);
@@ -250,7 +313,6 @@ class GRAD_EarClient
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Camera mode: report movement, with a slow heartbeat to recover from lost unreliable packets
 	protected void StreamCamera(SCR_PlayerController controller)
 	{
 		SCR_ManualCamera camera = SCR_CameraEditorComponent.GetCameraInstance();
@@ -260,14 +322,21 @@ class GRAD_EarClient
 		vector mat[4];
 		camera.GetWorldTransform(mat);
 
+		StreamPosition(controller, mat[3]);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Report a position when it moved, with a slow heartbeat to recover from lost unreliable packets
+	protected void StreamPosition(SCR_PlayerController controller, vector position)
+	{
 		float now_ms = GetGame().GetWorld().GetWorldTime();
-		bool moved = vector.DistanceSq(mat[3], m_vLastStreamed) > STREAM_MIN_MOVE_SQ;
+		bool moved = vector.DistanceSq(position, m_vLastStreamed) > STREAM_MIN_MOVE_SQ;
 		if (!moved && now_ms - m_fLastStream_ms < STREAM_HEARTBEAT_MS)
 			return;
 
-		m_vLastStreamed = mat[3];
+		m_vLastStreamed = position;
 		m_fLastStream_ms = now_ms;
-		controller.GRAD_StreamCameraPosition(mat[3]);
+		controller.GRAD_StreamPosition(position);
 	}
 }
 
@@ -279,8 +348,24 @@ modded class SCR_CameraEditorComponent : SCR_BaseEditorComponent
 	{
 		super.EOnFrame(owner, timeSlice);
 
-		GRAD_EarClient.GetInstance().Frame();
+		GRAD_EarClient earClient = GRAD_EarClient.GetInstance();
+		earClient.Frame();
 		GRAD_CursorHider.GetInstance().Frame();
+
+		//! Vanilla has just moved the editor manager entity onto the camera, and that movement is what gets
+		//! replicated to the server as "where the editor user is". With an ear dropped, report the ear instead.
+		vector earPosition;
+		if (!earClient.GetDroppedEarPosition(earPosition))
+			return;
+
+		SCR_EditorManagerEntity manager = GetEditorManagerEntity();
+		if (!manager || !manager.IsOpened())
+			return;
+
+		vector mat[4];
+		manager.GetWorldTransform(mat);
+		mat[3] = earPosition;
+		manager.SetWorldTransform(mat);
 	}
 
 	//------------------------------------------------------------------------------------------------
