@@ -280,6 +280,7 @@ modded class SCR_CameraEditorComponent : SCR_BaseEditorComponent
 		super.EOnFrame(owner, timeSlice);
 
 		GRAD_EarClient.GetInstance().Frame();
+		GRAD_CursorHider.GetInstance().Frame();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -288,5 +289,6 @@ modded class SCR_CameraEditorComponent : SCR_BaseEditorComponent
 		super.EOnEditorClose();
 
 		GRAD_EarClient.GetInstance().Deactivate();
+		GRAD_CursorHider.GetInstance().Reset();
 	}
 }
