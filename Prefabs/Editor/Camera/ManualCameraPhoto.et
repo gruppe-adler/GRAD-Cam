@@ -7,5 +7,7 @@ SCR_ManualCamera : "{D6DE32D1C0FCC1C7}Prefabs/Editor/Camera/ManualCameraBase.et"
   SCR_RotationInertiaManualCameraComponent "{52CC693B212FF000}" {
    m_fInertiaStrength 1
   }
+  GRAD_HideCursorManualCameraComponent "{4A7C2E19B03D5F81}" {
+  }
  }
 }
