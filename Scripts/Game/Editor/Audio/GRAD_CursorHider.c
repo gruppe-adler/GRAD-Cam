@@ -71,3 +71,23 @@ class GRAD_CursorHider
 		Print("[GRAD][Cursor] restored", LogLevel.NORMAL);
 	}
 }
+
+//------------------------------------------------------------------------------------------------
+//! Drives the cursor hider from every editor mode that owns a camera (Game Master, PHOTO, ...)
+modded class SCR_CameraEditorComponent : SCR_BaseEditorComponent
+{
+	override void EOnFrame(IEntity owner, float timeSlice)
+	{
+		super.EOnFrame(owner, timeSlice);
+
+		GRAD_CursorHider.GetInstance().Frame();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void EOnEditorClose()
+	{
+		super.EOnEditorClose();
+
+		GRAD_CursorHider.GetInstance().Reset();
+	}
+}
